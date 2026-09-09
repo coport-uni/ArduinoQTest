@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-arm ADB TCP mode on the MyHyundai phone
+# See docs/myhyundai-aircon-guide.md section 7 for the rig's
+# ADB layout and how to install this unit.
+Documentation=https://github.com/coport-uni/ArduinoQHomeAssistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as arduino so it reuses the already-authorised ADB key at
+# /home/arduino/.android/adbkey and the plugdev USB access.
+User=arduino
+Group=arduino
+ExecStart=/usr/local/bin/adb-tcp-rearm.sh

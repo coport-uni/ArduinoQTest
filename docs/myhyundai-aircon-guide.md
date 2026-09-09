@@ -63,11 +63,13 @@ proven necessary on real hardware; the rest reduce flakiness.
 | Network | Phone IP | DHCP reservation | this rig: 192.168.31.113 |
 | System / apps | Auto-updates (system and MyHyundai) | Off | an app update can change the UI |
 
-**ADB over TCP**: run `adb tcpip 5555` once per phone boot. On this
-rig the phone hangs off the UNO Q's USB hub, so the board itself
-can re-arm TCP after a phone reboot (adb client extracted at
-`/home/arduino/adb-local/`, see §7). Keep the phone on the charger
-and avoid reboots.
+**ADB over TCP**: adbd needs `adb tcpip 5555` once per phone boot,
+and nothing on the phone re-issues it. On this rig the phone hangs
+off the UNO Q's USB hub, so the board re-arms TCP itself --
+`adb-tcp-rearm.timer` (in `apps/adb-tcp-rearm/`) probes the port
+every two minutes and acts only when it is shut (see §7). Keep the
+phone on the charger anyway: a reboot still costs up to two minutes
+of ADB downtime.
 
 ## 3. Installation (this rig: HA Core venv on the UNO Q)
 
@@ -182,13 +184,33 @@ XML+PNG pair named `fail-<sequence>-<attempt>`.
   bootstrap, WiFi IP 192.168.31.113.
 - A standalone adb client lives at `/home/arduino/adb-local/`
   (extracted from .debs — Debian's adb package conflicts with the
-  board's preinstalled Arduino android libraries). Run it with
-  `LD_LIBRARY_PATH=/home/arduino/adb-local/rootfs/usr/lib/aarch64-linux-gnu/android`
-  and binary
-  `.../rootfs/usr/lib/android-sdk/platform-tools/adb`; the
-  `arduino` user is in `plugdev` for USB access.
-- After a phone reboot: from the board, `adb tcpip 5555` over the
-  USB connection re-arms TCP mode.
+  board's preinstalled Arduino android libraries). The binary is
+  `/home/arduino/adb-local/rootfs/usr/bin/adb` and it only runs with
+  its own libraries on the path:
+  `LD_LIBRARY_PATH=/home/arduino/adb-local/rootfs/usr/lib/aarch64-linux-gnu/android`.
+  The `arduino` user is in `plugdev` for USB access.
+- After a phone reboot, TCP mode is gone and must be re-armed over
+  the USB connection with `adb tcpip 5555`. This is automated by
+  `apps/adb-tcp-rearm/`, installed as:
+
+  ```bash
+  cd apps/adb-tcp-rearm
+  sudo install -m 755 adb-tcp-rearm.sh /usr/local/bin/
+  sudo install -m 644 adb-tcp-rearm.{service,timer} /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now adb-tcp-rearm.timer
+  ```
+
+  The script probes TCP 5555 and re-arms only when it is shut, so
+  the happy path is a single TCP connect. Override `PHONE_SERIAL`,
+  `PHONE_HOST` or `ADB_PORT` in the unit if the rig changes.
+- What the missing re-arm actually breaks: a phone reboot alone is
+  survivable, but if HA restarts while TCP is down the config entry
+  lands in `setup_retry` and every `myhyundai_*` entity turns
+  `unavailable`. `away-car-aircon.yaml` then fails **silently** --
+  its condition on `switch.myhyundai_aircon == 'off'` can never be
+  true, so it neither fires nor logs. Verified on 2026-09-09 after
+  five days of dead automation.
 - The component's config entry reuses the already-authorized
   `/home/arduino/.android/adbkey`, so no extra phone prompts.
 

@@ -77,6 +77,17 @@ detection, #2 reproducibility guide, #3 WiFi + VS Code Remote-SSH,
   the known networks in the exclusion set. **Rule**: Never let
   `unavailable`/`unknown` fall into the default branch of an
   automation whose action has a physical consequence. (from ToDo#47)
+- **Problem**: `away-car-aircon.yaml` stopped firing for five days
+  with nothing in the log. **Cause**: Its condition tests
+  `switch.myhyundai_aircon == 'off'`, and the integration behind that
+  switch had failed to load, so the entity read `unavailable`. A
+  condition that is merely false is not an error, so HA logged
+  nothing and `last_triggered` simply froze. **Fix**: Restore the
+  integration; watch `last_triggered` and the config entry state, not
+  the log. **Rule**: Never treat a quiet automation as a healthy one
+  -- a condition on an entity that can go `unavailable` fails
+  silently, so check config entry state and `last_triggered` when
+  diagnosing. (from ToDo#51)
 
 ## §3. Library Quirks
 
@@ -309,6 +320,27 @@ detection, #2 reproducibility guide, #3 WiFi + VS Code Remote-SSH,
   identify the HA install method (container vs venv/systemd) on a
   board before using guide paths — two UNO Q units exist with
   different layouts. (from ToDo#17)
+- **Problem**: The MyHyundai integration sat in `setup_retry` for
+  five days: `Connect call failed ('192.168.31.113', 5555)`, while
+  the phone pinged fine and was still authorised over USB.
+  **Cause**: adbd drops back to USB-only on every phone boot;
+  `adb tcpip 5555` has to be re-issued and nothing did. It only
+  became fatal because HA restarted while the port was shut, which
+  turns a survivable outage into a failed entry setup. **Fix**:
+  `apps/adb-tcp-rearm/` -- a systemd timer that probes the port
+  every two minutes and re-arms over USB only when it is shut.
+  **Rule**: Always give a per-boot device setting (`adb tcpip`) an
+  automatic re-arm on the host that can reach it, rather than
+  relying on the device never rebooting. (from ToDo#51)
+- **Problem**: The adb path documented in the MyHyundai guide §7 did
+  not exist, so the documented recovery could not be run. **Cause**:
+  The path was recorded as the Debian package layout
+  (`.../usr/lib/android-sdk/platform-tools/adb`) rather than what
+  the extraction actually produced (`.../usr/bin/adb`), and it also
+  needs `LD_LIBRARY_PATH` set. **Fix**: Corrected §7 against the
+  real filesystem. **Rule**: Always verify a documented path by
+  running it on the box before the documentation is relied on in an
+  outage. (from ToDo#51)
 
 ## §99. Uncategorized
 
