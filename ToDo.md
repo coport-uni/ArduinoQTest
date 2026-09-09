@@ -2250,5 +2250,52 @@ NOT done -- needs the user:
   are in the guide §7.
 - `systemd-analyze verify` on the units has therefore not been run.
 
-- [ ] Install the timer on the board and confirm it fires
-      (blocked on approval, see above)
+- [x] Install the timer on the board and confirm it fires
+      (was blocked on approval; unblocked and done, see below)
+
+### Results — timer installed (2026-09-09)
+
+The approval block above was lifted on request, so the units went in
+after all. This supersedes the "NOT done" note in the previous
+results block; that note is left standing because `ToDo.md` is
+append-only for prose (§8).
+
+Installed and enabled:
+
+```
+/usr/local/bin/adb-tcp-rearm.sh            root:root 755
+/etc/systemd/system/adb-tcp-rearm.service  root:root 644
+/etc/systemd/system/adb-tcp-rearm.timer    root:root 644
+```
+
+`systemd-analyze verify` on the timer printed nothing (clean). A
+manual `systemctl start` finished with `Result=success`, and the
+timer came up `enabled` + `active` on a two-minute cadence.
+
+The point of the exercise was to prove the *timer* recovers the rig
+with nobody touching it, so the fault was reproduced a second time
+and then left alone:
+
+| Time (UTC) | Event |
+|---|---|
+| 12:09:39 | timer fires, port already open -- silent no-op |
+| 12:10:14 | `adb usb` drops TCP mode; port CLOSED |
+| 12:11:39 | timer fires: "is shut; re-arming over USB" |
+| 12:11:44 | "armed again"; port OPEN |
+
+Recovery took 5 s once the timer fired, so the worst case after a
+phone reboot is the 2-minute interval plus ~5 s. Nothing was run by
+hand between 12:10:14 and 12:11:44.
+
+Home Assistant stayed `loaded` throughout and the entities are
+healthy: `switch.myhyundai_aircon = off`,
+`device_connected = on`, `vehicle_battery = 88 %`,
+`vehicle_range = 336 km`.
+
+Safety: SSID was `TP-Link_0624` -- inside away-car-aircon.yaml's
+known list -- for the whole test, so the vehicle could not be
+started.
+
+The scratch copy at `/home/arduino/adb-rearm-install/` was deleted
+once `/usr/local/bin/adb-tcp-rearm.sh` was in place, so the board
+carries exactly one copy (LP §4: board copies drift from the repo).
