@@ -1664,3 +1664,35 @@ this repo.
       both flows.
 
 DormTapo1/DormTapo2 and the four live automations were not touched.
+
+### Correction (2026-09-09): the account is the same; HA simply keeps
+### no reusable copy of it
+
+The user pushed back -- the new plugs are on the same TP-Link account
+as DormTapo1/2 -- and they are right. The "different account or
+changed password" reading above is wrong. Read from the installed
+component on the board (HA 2026.2.3,
+`homeassistant/components/tplink/`):
+
+- `set_credentials()` writes the account to `hass.data[DOMAIN]
+  [CONF_AUTHENTICATION]` -- memory only, no Store -- and its only
+  callers are three branches of `config_flow.py`. `async_setup_entry`
+  never calls it, so a restart leaves the cache empty.
+- `get_credentials()` reads that same in-memory dict and returns
+  `None` once it is empty, which is what makes the flow fall through
+  to `discovery_auth_confirm` / `user_auth_confirm`.
+- What each config entry does persist is `CONF_CREDENTIALS_HASH`,
+  and `__init__.py` applies it only to that entry's own device. A
+  hash derived for DormTapo1 cannot authenticate a new plug.
+
+So 2026-09-01's "the second flow reused HA's stored credentials"
+was a same-session effect: the first flow had just warmed the memory
+cache. Nothing carried over to today. Re-entering the same account
+is the expected path, not a workaround.
+
+- [x] Add `.env.example` at the repository root so the account can be
+      supplied from a gitignored `.env` instead of chat: TAPO_USER /
+      TAPO_PASS for ha_add_tapo.sh, plus the HA_* and MQTT_HOST vars
+      the other claude_test scripts already read. `.gitignore` line
+      27 already covers `.env`; `git check-ignore` confirms the
+      example itself stays tracked.
