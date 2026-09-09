@@ -1597,3 +1597,70 @@ separate stacked PR would only fragment the review.
 - Committed onto the existing branch and PR #45 rather than opening
   a second stacked PR; issue #44 and the PR body were updated to the
   three-colour behaviour.
+
+## 2026-09-09 — Register the two newly added Tapo plugs in HA
+
+Requested by user ("내가 tapo 장치 2개를 추가했어. 홈 어시스턴트에도
+반영해줘"). Scope confirmed up front: registration in Home Assistant
+only — no dashboard card, no automation wiring — and NO relay toggle
+test, because what the new plugs feed is unknown. (see LP §2, §3)
+
+Input validation, before writing this entry:
+
+- Which devices was left unstated, so both were resolved against the
+  live network rather than guessed: `probe_all.py 192.168.31` on the
+  board's `ha_venv` python finds four P110M(KR), two of them new —
+  192.168.31.156 (C0:3A:55:3F:17:C0) and 192.168.31.196
+  (C0:3A:55:3F:17:E8) — alongside the known DormTapo1 (.19) and
+  DormTapo2 (.240).
+- HA had already noticed both: `config_entries/flow/progress` over
+  the websocket shows two pending `tplink` `integration_discovery`
+  flows, one per new MAC. Their `title_placeholders` name them
+  `17C0` / `17E8`, which is the MAC-suffix fallback shown before
+  KLAP authentication, not the Tapo-app alias.
+- Credentials are not expected from the user this time: HA already
+  stores the TP-Link account from the 2026-09-01 registration, and
+  that session recorded the second flow reusing them and skipping
+  the auth step.
+
+- [ ] Confirm the two pending `tplink` discovery flows into config
+      entries, reusing HA's stored TP-Link credentials
+- [ ] Verify the entity sets appeared and read the real Tapo-app
+      aliases back from HA (never from documentation, LP §2)
+- [ ] Confirm the plugs are live by their own power readings only —
+      no relay toggling, per the user's decision
+- [ ] Leave DormTapo1/DormTapo2 and
+      `automation.monitor_plug_on_the_dorm_wifi` untouched, and
+      re-check them after the new entries load
+- [ ] Record results below
+
+### Blocked (2026-09-09): HA's stored TP-Link credentials do not
+### authenticate the new plugs
+
+The expectation recorded above -- that HA would reuse the account
+stored on 2026-09-01 and skip the auth step -- does not hold for
+these two devices. Both paths ask for credentials:
+
+- The pending `integration_discovery` flows sit at step
+  `discovery_auth_confirm` with a required `username`/`password`
+  schema, for both `.156` and `.196`.
+- A fresh user-initiated flow behaves the same: `pick_device` lists
+  exactly the two new MACs (the two registered plugs are correctly
+  filtered out), and picking `c0:3a:55:3f:17:c0` lands on
+  `user_auth_confirm` rather than `create_entry`. That flow was
+  aborted (`{"message":"Flow aborted"}`) so no half-built entry was
+  left behind.
+
+HA only shows those steps after the initial connect raises
+`AuthenticationError` with the credentials it has, so either the new
+plugs are bound to a different TP-Link account or the stored password
+has since changed. Nothing on the HA side can resolve this; the
+account credentials must come from the user and are never stored in
+this repo.
+
+- [ ] BLOCKED on user: TP-Link account username + password for the
+      new plugs. Verify with python-kasa against 192.168.31.156
+      before feeding them into the config flow (LP §2), then confirm
+      both flows.
+
+DormTapo1/DormTapo2 and the four live automations were not touched.
