@@ -1696,3 +1696,56 @@ is the expected path, not a workaround.
       the other claude_test scripts already read. `.gitignore` line
       27 already covers `.env`; `git check-ignore` confirms the
       example itself stays tracked.
+
+### Results (2026-09-09)
+
+Unblocked by the user, who was right on both counts: same account,
+and the env-file route worked. Credentials arrived in a local
+`secure.env` -- NOT matched by `.gitignore`'s `.env` pattern, so
+`*.env` and `secure.env` were added to the Secrets block before
+anything else. `git log --all -- secure.env` is empty, so the file
+was never committed; `.env.example` stays tracked.
+
+Pre-check first (LP §2), with `claude_test/kasa_auth_check.py`
+streamed to the board's HA venv python so nothing was written to disk
+there. All three probed plugs authenticated on the one account, which
+settles the "different account" question and gives the real aliases
+that HA could not read pre-auth:
+
+| IP | MAC | Alias | State |
+|---|---|---|---|
+| 192.168.31.156 | C0:3A:55:3F:17:C0 | `DormTapo3` | on |
+| 192.168.31.196 | C0:3A:55:3F:17:E8 | `DormTapo4` | on |
+| 192.168.31.19 | 18:69:45:71:0C:49 | `DormTapo1` (control) | off |
+
+Registration used the two pending `integration_discovery` flows
+rather than fresh user flows, so no competing flow was created. The
+first took the credentials and returned `create_entry` /
+"DormTapo3 P110M"; the second then skipped auth entirely and came
+back at `discovery_confirm`, needing only `{}` -> `create_entry` /
+"DormTapo4 P110M". That is the in-memory cache warming mid-session --
+the same effect misread as persistence on 2026-09-01, now seen from
+both sides in one session.
+
+Verified afterwards:
+
+- 4 tplink entries, all `loaded`; 0 in-progress flows left.
+- Tapo entities 32 -> 64, exactly 16 per new plug (switch, LED,
+  auto-off pair, energy sensors, overheat/overload binaries).
+- Live power confirms both plugs really are talking, with no relay
+  toggling per the user's decision: DormTapo3 1.0 W / 227.3 V,
+  DormTapo4 100.0 W / 226.9 V. The 100 W on DormTapo4 vindicates
+  skipping the toggle test -- something substantial is plugged in.
+- Untouched as intended: `switch.dormtapo1` still off,
+  `switch.dormtapo2` still on, and all four automations still `on`.
+
+- [x] Confirm the two pending `tplink` discovery flows into config
+      entries -- done, though with credentials supplied, not reused
+- [x] Verify the entity sets and read the real aliases back from HA
+- [x] Confirm the plugs are live by their power readings only
+- [x] Leave DormTapo1/DormTapo2 and the automations untouched
+- [x] Record results
+
+Not done, by scope: DormTapo3/4 are in no dashboard and no
+automation. `automation.monitor_plug_on_the_dorm_wifi` still drives
+`switch.dormtapo1` alone.
