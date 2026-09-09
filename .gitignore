@@ -26,6 +26,8 @@ Thumbs.db
 # ===== Secrets =====
 .env
 .env.local
+*.env
+secure.env
 *.key
 *.pem
 .ha_token

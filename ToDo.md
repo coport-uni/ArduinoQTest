@@ -1845,3 +1845,320 @@ Worth recording about the switch itself: `_auto_off` only calls
 `_reset_to_off()`. It sends NO off command -- it mirrors the vehicle's
 own ~10-minute remote-climate limit in the entity state.
 
+## 2026-09-04 — Monitor plug follows the phone onto the dorm WiFi
+
+Requested by user: the monitor's smart plug should be on only while
+the phone is connected to `XiaomiDorm55`. User decisions taken up
+front: dorm membership is `XiaomiDorm55` alone (not the three-SSID
+set that phone-wifi-led4.yaml treats as "the dorm"), turning on is
+immediate, and leaving the network turns the plug off after a hold.
+GitHub issue #50. (see LP §2)
+
+Input validation, before writing this entry:
+
+- Plug identity resolved against the live board, not the repo. The
+  2026-07-13 entries name `switch.tapo_p1` / `switch.tapo_p2`; both
+  have since been renamed in the Tapo app, and HA now exposes
+  `switch.dormtapo1` = "기숙사-모니터" (the monitor, the target here)
+  and `switch.dormtapo2` = "기숙사-충전기".
+- Recorder checked for 7 days of `sensor.sm_f966n_wi_fi_connection`
+  before choosing the SSID set and the hold, per LP §2: XiaomiDorm55
+  holds 18.79 h, ASUS_55 and ASUS_55_24 hold 0.00 h each (one
+  momentary sample apiece, 2026-09-02 13:42). The phone does not in
+  fact roam between the dorm's three SSIDs, so "XiaomiDorm55 only" is
+  not the trap it looked like. One real excursion lasted 0.1 min
+  (6 s) and returned, which is what the hold has to absorb.
+
+- [x] Write `apps/ha-automations/dorm-monitor-plug.yaml`: turn
+      `switch.dormtapo1` on when the SSID becomes `XiaomiDorm55`, and
+      off once it has been anything else for two minutes
+- [x] Keep `unavailable` / `unknown` out of the off path -- losing
+      contact with the phone must never cut power to a monitor the
+      user may be sitting in front of (LP §2)
+- [x] Install on the board with `claude_test/ha_add_automation.py`
+      and confirm it loaded as an `automation.*` entity (LP §2)
+- [x] Verify both directions live against the real plug, with the
+      monitor's original state restored afterwards
+- [x] Document the SSID / plug mapping so the stale `switch.tapo_p1`
+      naming is not repeated
+
+### Results (2026-09-04)
+
+Installed as `automation.monitor_plug_on_the_dorm_wifi`. Verified by
+driving `sensor.sm_f966n_wi_fi_connection` through the states API,
+which raises a real `state_changed` event, so the automation fired for
+real rather than through `automation.trigger`:
+
+| Case | Result |
+|---|---|
+| SSID -> `XiaomiDorm55` | plug on after 2.1 s |
+| SSID -> `WUNIST_AAA`, at t+60 s | still on (hold absorbing it) |
+| ... at t+122 s | off |
+| SSID -> `unavailable`, 150 s | still on |
+| SSID -> `unknown`, 150 s | still on |
+| SSID -> `<not connected>` | off after 123 s |
+
+The plug was restored to its original `on` afterwards.
+
+Two triggers with ids rather than one template: the off side needs a
+template so its `for` survives the phone hopping between several other
+SSIDs, while the on side wants a plain `to:` state trigger so arriving
+is instant. No `homeassistant: start` trigger, unlike
+phone-wifi-led4.yaml -- re-applying an LED colour at startup is free,
+re-asserting mains power from a just-restored sensor value is not.
+
+INCIDENT: the last verification step left the sensor at
+`<not connected>` while away-car-aircon.yaml was live on the board,
+and that automation fired at 01:42:46 UTC and really did start the
+vehicle (`last_result=success`, `공조가 켜졌습니다.`,
+`binary_sensor.myhyundai_climate_running=on` at 01:43:27). The test
+had been designed to stay inside away-car-aircon's known-network list,
+but `<not connected>` is deliberately NOT in that list -- it is one of
+the states that automation treats as "away". The earlier test ended on
+`WUNIST_AAA` and was safe; this one was not. `switch.turn_off` on
+`switch.myhyundai_aircon` was blocked by the environment's approval
+policy, so the vehicle was left to its own ~10-minute remote-climate
+limit. Recorded as LP §2.
+
+NOT done:
+
+- The vehicle was never confirmed back off from this session; the
+  turn-off command and even the follow-up state read were both denied
+  by the approval policy. Left with the user.
+
+## 2026-09-09 — Register the two newly added Tapo plugs in HA
+
+Requested by user ("내가 tapo 장치 2개를 추가했어. 홈 어시스턴트에도
+반영해줘"). Scope confirmed up front: registration in Home Assistant
+only — no dashboard card, no automation wiring — and NO relay toggle
+test, because what the new plugs feed is unknown. (see LP §2, §3)
+
+Input validation, before writing this entry:
+
+- Which devices was left unstated, so both were resolved against the
+  live network rather than guessed: `probe_all.py 192.168.31` on the
+  board's `ha_venv` python finds four P110M(KR), two of them new —
+  192.168.31.156 (C0:3A:55:3F:17:C0) and 192.168.31.196
+  (C0:3A:55:3F:17:E8) — alongside the known DormTapo1 (.19) and
+  DormTapo2 (.240).
+- HA had already noticed both: `config_entries/flow/progress` over
+  the websocket shows two pending `tplink` `integration_discovery`
+  flows, one per new MAC. Their `title_placeholders` name them
+  `17C0` / `17E8`, which is the MAC-suffix fallback shown before
+  KLAP authentication, not the Tapo-app alias.
+- Credentials are not expected from the user this time: HA already
+  stores the TP-Link account from the 2026-09-01 registration, and
+  that session recorded the second flow reusing them and skipping
+  the auth step.
+
+- [ ] Confirm the two pending `tplink` discovery flows into config
+      entries, reusing HA's stored TP-Link credentials
+- [ ] Verify the entity sets appeared and read the real Tapo-app
+      aliases back from HA (never from documentation, LP §2)
+- [ ] Confirm the plugs are live by their own power readings only —
+      no relay toggling, per the user's decision
+- [ ] Leave DormTapo1/DormTapo2 and
+      `automation.monitor_plug_on_the_dorm_wifi` untouched, and
+      re-check them after the new entries load
+- [ ] Record results below
+
+### Blocked (2026-09-09): HA's stored TP-Link credentials do not
+### authenticate the new plugs
+
+The expectation recorded above -- that HA would reuse the account
+stored on 2026-09-01 and skip the auth step -- does not hold for
+these two devices. Both paths ask for credentials:
+
+- The pending `integration_discovery` flows sit at step
+  `discovery_auth_confirm` with a required `username`/`password`
+  schema, for both `.156` and `.196`.
+- A fresh user-initiated flow behaves the same: `pick_device` lists
+  exactly the two new MACs (the two registered plugs are correctly
+  filtered out), and picking `c0:3a:55:3f:17:c0` lands on
+  `user_auth_confirm` rather than `create_entry`. That flow was
+  aborted (`{"message":"Flow aborted"}`) so no half-built entry was
+  left behind.
+
+HA only shows those steps after the initial connect raises
+`AuthenticationError` with the credentials it has, so either the new
+plugs are bound to a different TP-Link account or the stored password
+has since changed. Nothing on the HA side can resolve this; the
+account credentials must come from the user and are never stored in
+this repo.
+
+- [ ] BLOCKED on user: TP-Link account username + password for the
+      new plugs. Verify with python-kasa against 192.168.31.156
+      before feeding them into the config flow (LP §2), then confirm
+      both flows.
+
+DormTapo1/DormTapo2 and the four live automations were not touched.
+
+### Correction (2026-09-09): the account is the same; HA simply keeps
+### no reusable copy of it
+
+The user pushed back -- the new plugs are on the same TP-Link account
+as DormTapo1/2 -- and they are right. The "different account or
+changed password" reading above is wrong. Read from the installed
+component on the board (HA 2026.2.3,
+`homeassistant/components/tplink/`):
+
+- `set_credentials()` writes the account to `hass.data[DOMAIN]
+  [CONF_AUTHENTICATION]` -- memory only, no Store -- and its only
+  callers are three branches of `config_flow.py`. `async_setup_entry`
+  never calls it, so a restart leaves the cache empty.
+- `get_credentials()` reads that same in-memory dict and returns
+  `None` once it is empty, which is what makes the flow fall through
+  to `discovery_auth_confirm` / `user_auth_confirm`.
+- What each config entry does persist is `CONF_CREDENTIALS_HASH`,
+  and `__init__.py` applies it only to that entry's own device. A
+  hash derived for DormTapo1 cannot authenticate a new plug.
+
+So 2026-09-01's "the second flow reused HA's stored credentials"
+was a same-session effect: the first flow had just warmed the memory
+cache. Nothing carried over to today. Re-entering the same account
+is the expected path, not a workaround.
+
+- [x] Add `.env.example` at the repository root so the account can be
+      supplied from a gitignored `.env` instead of chat: TAPO_USER /
+      TAPO_PASS for ha_add_tapo.sh, plus the HA_* and MQTT_HOST vars
+      the other claude_test scripts already read. `.gitignore` line
+      27 already covers `.env`; `git check-ignore` confirms the
+      example itself stays tracked.
+
+### Results (2026-09-09)
+
+Unblocked by the user, who was right on both counts: same account,
+and the env-file route worked. Credentials arrived in a local
+`secure.env` -- NOT matched by `.gitignore`'s `.env` pattern, so
+`*.env` and `secure.env` were added to the Secrets block before
+anything else. `git log --all -- secure.env` is empty, so the file
+was never committed; `.env.example` stays tracked.
+
+Pre-check first (LP §2), with `claude_test/kasa_auth_check.py`
+streamed to the board's HA venv python so nothing was written to disk
+there. All three probed plugs authenticated on the one account, which
+settles the "different account" question and gives the real aliases
+that HA could not read pre-auth:
+
+| IP | MAC | Alias | State |
+|---|---|---|---|
+| 192.168.31.156 | C0:3A:55:3F:17:C0 | `DormTapo3` | on |
+| 192.168.31.196 | C0:3A:55:3F:17:E8 | `DormTapo4` | on |
+| 192.168.31.19 | 18:69:45:71:0C:49 | `DormTapo1` (control) | off |
+
+Registration used the two pending `integration_discovery` flows
+rather than fresh user flows, so no competing flow was created. The
+first took the credentials and returned `create_entry` /
+"DormTapo3 P110M"; the second then skipped auth entirely and came
+back at `discovery_confirm`, needing only `{}` -> `create_entry` /
+"DormTapo4 P110M". That is the in-memory cache warming mid-session --
+the same effect misread as persistence on 2026-09-01, now seen from
+both sides in one session.
+
+Verified afterwards:
+
+- 4 tplink entries, all `loaded`; 0 in-progress flows left.
+- Tapo entities 32 -> 64, exactly 16 per new plug (switch, LED,
+  auto-off pair, energy sensors, overheat/overload binaries).
+- Live power confirms both plugs really are talking, with no relay
+  toggling per the user's decision: DormTapo3 1.0 W / 227.3 V,
+  DormTapo4 100.0 W / 226.9 V. The 100 W on DormTapo4 vindicates
+  skipping the toggle test -- something substantial is plugged in.
+- Untouched as intended: `switch.dormtapo1` still off,
+  `switch.dormtapo2` still on, and all four automations still `on`.
+
+- [x] Confirm the two pending `tplink` discovery flows into config
+      entries -- done, though with credentials supplied, not reused
+- [x] Verify the entity sets and read the real aliases back from HA
+- [x] Confirm the plugs are live by their power readings only
+- [x] Leave DormTapo1/DormTapo2 and the automations untouched
+- [x] Record results
+
+Not done, by scope: DormTapo3/4 are in no dashboard and no
+automation. `automation.monitor_plug_on_the_dorm_wifi` still drives
+`switch.dormtapo1` alone.
+
+## 2026-09-09 — DormTapo3 switches with the monitor plug
+
+Requested by user ("지금 모니터 자동화에 dorm tapo3도 모니터와 같이
+반응하도록 구성해줘"). GitHub issue #54. (see LP §2)
+
+Input validation, before writing this entry:
+
+- The request names one plug and one existing automation, so nothing
+  was ambiguous enough to block on. "같이 반응" is read as one target
+  list on the existing `choose`, not a second rule: both are desk
+  loads on the same "is the user here" signal, and splitting them
+  invites drift.
+- `switch.dormtapo3` confirmed live in HA first (registered earlier
+  today, issue #52, reading 1.0 W). Entity id read back from HA, not
+  copied from documentation (LP §2).
+- Branch note: `dorm-monitor-plug.yaml` exists only on
+  `feature/dorm-monitor-plug` (PR #51, still open), not on `main`, so
+  this work goes onto that branch and PR rather than a new one --
+  same call as the 2026-09-02 LED4 third-colour entry. Both this
+  branch and `feature/register-new-tapo-plugs` (PR #53) append to
+  `ToDo.md`, so whichever merges second will conflict at EOF; that is
+  a mechanical resolution, not a content question.
+
+- [ ] Add `switch.dormtapo3` to both branches of the `choose` in
+      `apps/ha-automations/dorm-monitor-plug.yaml`
+- [ ] Keep `switch.dormtapo2` (the charger) out -- a charger is
+      useful while nobody is at the desk -- and leave DormTapo4
+      unclaimed
+- [ ] Leave the SSID set, the two-minute hold, the
+      `unavailable`/`unknown` exclusion and the missing
+      `homeassistant: start` trigger exactly as they were
+- [ ] Install with `claude_test/ha_add_automation.py` and confirm the
+      reload
+- [ ] Verify both directions live and restore the original plug
+      states afterwards
+- [ ] Record results below
+
+### Results (2026-09-09)
+
+Installed over the existing `dorm_monitor_plug` id and read back from
+HA: both branches of the `choose` now carry the two-entity list, and
+the automation reloaded as
+`automation.monitor_plug_on_the_dorm_wifi (on)` -- same entity id, so
+nothing that references it broke. The `alias` was deliberately left
+at "Monitor plug on the dorm WiFi"; only `description` and the header
+comment were widened. Renaming would not have moved the entity id
+(the installer keys on the automation id, and HA's registry does
+too), but the old name is what the earlier ToDo entries and the
+dashboard refer to, so it is the user's call, not a silent change.
+
+Verified live by driving `sensor.sm_f966n_wi_fi_connection` through
+the states API, which raises a real `state_changed` event:
+
+| Case | ssid | tapo1 | tapo3 |
+|---|---|---|---|
+| initial | WUNIST_AAA | off | on |
+| arrive, t+8s | XiaomiDorm55 | on | on |
+| leave, t+60s | WUNIST_AAA | on | on |
+| ... t+130s | WUNIST_AAA | off | off |
+
+The first pass proved the off-path for DormTapo3 but not the on-path
+-- the plug was already on when the arrive branch ran. Second pass
+with DormTapo3 preset to off: arrive took it off -> on in under 8 s
+alongside the monitor, and the two-minute hold then took both off
+again. Original states restored both times (tapo1 off, tapo3 on).
+
+Safety: the whole test stayed inside away-car-aircon.yaml's known-SSID
+list, moving only between `WUNIST_AAA` and `XiaomiDorm55`, so its
+template trigger never became true. This is the direct lesson from the
+2026-09-04 incident, where ending a test on `<not connected>` really
+did start the vehicle. `switch.myhyundai_aircon` read `unavailable`
+throughout and was never commanded.
+
+- [x] Add `switch.dormtapo3` to both branches of the `choose`
+- [x] Keep `switch.dormtapo2` out and leave DormTapo4 unclaimed
+- [x] Leave the SSID set, the hold, the `unavailable`/`unknown`
+      exclusion and the missing start trigger untouched
+- [x] Install and confirm the reload
+- [x] Verify both directions live and restore the plug states
+- [x] Record results
+
+Note for whoever merges: this branch and
+`feature/register-new-tapo-plugs` (PR #53) both append to `ToDo.md`,
+so the second merge will conflict at EOF. Keep both blocks.
