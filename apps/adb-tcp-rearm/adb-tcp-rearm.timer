@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep ADB TCP mode armed on the MyHyundai phone
+
+[Timer]
+# A timer rather than a boot-only unit: the trigger is a *phone*
+# reboot, which happens while the board stays up. Two minutes caps
+# how long the integration can sit unavailable, and the check costs
+# one TCP connect when nothing is wrong.
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=adb-tcp-rearm.service
+
+[Install]
+WantedBy=timers.target

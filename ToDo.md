@@ -2162,3 +2162,140 @@ throughout and was never commanded.
 Note for whoever merges: this branch and
 `feature/register-new-tapo-plugs` (PR #53) both append to `ToDo.md`,
 so the second merge will conflict at EOF. Keep both blocks.
+
+## 2026-09-09 — Keep ADB TCP armed so MyHyundai survives a phone reboot
+
+Requested by user ("왜 지금 마이현대 자동화가 안되는 것이지" -> diagnose,
+then "진행해줘" on the two-part plan). GitHub issue #55. (see LP §2, §5)
+
+Diagnosis that started this, all read from the live rig:
+
+- `myhyundai_aircon` config entry sat in `setup_retry` since the
+  01:42 HA restart: `device unreachable, retrying in 5 s:
+  [Errno 111] Connect call failed ('192.168.31.113', 5555)`. Every
+  `myhyundai_*` entity was `unavailable` with `restored=True`.
+- The phone was **not** the problem in the obvious way: it answered
+  ping at .113 and `adb devices` over USB listed `R3CR80H1GBN
+  device` (authorised). Only TCP 5555 was refused -- adbd had left
+  TCP mode, which is what a phone reboot does. Documented in the
+  guide §2 already; nothing re-arms it automatically.
+- Second-order effect worth recording: `away-car-aircon.yaml`
+  conditions on `switch.myhyundai_aircon == 'off'`, so while the
+  entity is `unavailable` the automation cannot fire and cannot log
+  an error either. It fails silently. `last_triggered` had been
+  frozen at 2026-09-04 07:58 for five days.
+- Recovery was one command over USB (`adb tcpip 5555`) plus a config
+  entry reload. Done before this entry was written, with the phone's
+  SSID confirmed as `TP-Link_0624` -- inside away-car-aircon's known
+  list, so re-arming could not start the vehicle. This is the 09-04
+  incident's lesson applied (LP §2).
+- The guide's §7 adb path is wrong: the binary is at
+  `rootfs/usr/bin/adb`, not
+  `rootfs/usr/lib/android-sdk/platform-tools/adb`. The documented
+  path does not exist, so the documented recovery fails as written.
+
+- [x] Add `apps/adb-tcp-rearm/adb-tcp-rearm.sh`: probe TCP 5555, and
+      only if it is shut, re-arm over USB. Idempotent, no-op on the
+      happy path
+- [x] Drive it from a systemd timer, not a boot-only unit -- the
+      trigger is a *phone* reboot, which can happen while the board
+      stays up
+- [x] Fix the §7 adb path in `docs/myhyundai-aircon-guide.md` and
+      document the timer in §7 and §2
+- [ ] Install on the board, then verify by really dropping TCP mode
+      (`adb usb`) and watching the timer bring it back
+- [ ] Confirm HA reloads the entry by itself afterwards
+- [x] Append the lesson to `LearnedPatterns.md` §5
+- [x] Record results below
+
+### Results (2026-09-09)
+
+Recovery first, before anything was written: `adb tcpip 5555` over
+USB, then a config entry reload
+(`POST /api/config/config_entries/entry/<id>/reload`). The entry went
+`setup_retry` -> `loaded` and the entities came back --
+`switch.myhyundai_aircon = off`, `vehicle_battery = 88 %`,
+`vehicle_range = 336 km`, `app_version = 1.6.0`. SSID was
+`TP-Link_0624` (inside away-car-aircon's known list) at the moment of
+the reload, so re-arming could not start the vehicle.
+
+The script was then verified against a *reproduced* fault rather than
+a simulated one -- `adb usb` really does drop TCP mode, the same way a
+phone reboot does:
+
+| Step | Observed |
+|---|---|
+| port before | OPEN |
+| `adb usb`, +6 s | CLOSED |
+| script run | logged "is shut; re-arming over USB" -> "armed again", exit 0 |
+| port after | OPEN |
+| second run | silent, exit 0 (no-op path) |
+
+Worth recording: HA stayed `loaded` across the whole ~1 minute
+outage and needed no reload. That sharpens the diagnosis -- a phone
+reboot on its own is survivable, and the five-day failure happened
+because the 01:42 HA restart landed while the port was shut, so
+*setup* failed rather than a poll. The timer's real job is to make
+sure TCP is back before the next HA restart.
+
+NOT done -- needs the user:
+
+- The systemd units are written and syntax-checked but **not
+  installed**. `sudo install ... /etc/systemd/system/` and
+  `systemctl enable --now` were both refused by this environment's
+  approval policy. Until they are installed, the fix exists only as
+  the manually-run script at
+  `/home/arduino/adb-rearm-install/adb-tcp-rearm.sh` on the board;
+  the next phone reboot will need it run by hand. Install commands
+  are in the guide §7.
+- `systemd-analyze verify` on the units has therefore not been run.
+
+- [x] Install the timer on the board and confirm it fires
+      (was blocked on approval; unblocked and done, see below)
+
+### Results — timer installed (2026-09-09)
+
+The approval block above was lifted on request, so the units went in
+after all. This supersedes the "NOT done" note in the previous
+results block; that note is left standing because `ToDo.md` is
+append-only for prose (§8).
+
+Installed and enabled:
+
+```
+/usr/local/bin/adb-tcp-rearm.sh            root:root 755
+/etc/systemd/system/adb-tcp-rearm.service  root:root 644
+/etc/systemd/system/adb-tcp-rearm.timer    root:root 644
+```
+
+`systemd-analyze verify` on the timer printed nothing (clean). A
+manual `systemctl start` finished with `Result=success`, and the
+timer came up `enabled` + `active` on a two-minute cadence.
+
+The point of the exercise was to prove the *timer* recovers the rig
+with nobody touching it, so the fault was reproduced a second time
+and then left alone:
+
+| Time (UTC) | Event |
+|---|---|
+| 12:09:39 | timer fires, port already open -- silent no-op |
+| 12:10:14 | `adb usb` drops TCP mode; port CLOSED |
+| 12:11:39 | timer fires: "is shut; re-arming over USB" |
+| 12:11:44 | "armed again"; port OPEN |
+
+Recovery took 5 s once the timer fired, so the worst case after a
+phone reboot is the 2-minute interval plus ~5 s. Nothing was run by
+hand between 12:10:14 and 12:11:44.
+
+Home Assistant stayed `loaded` throughout and the entities are
+healthy: `switch.myhyundai_aircon = off`,
+`device_connected = on`, `vehicle_battery = 88 %`,
+`vehicle_range = 336 km`.
+
+Safety: SSID was `TP-Link_0624` -- inside away-car-aircon.yaml's
+known list -- for the whole test, so the vehicle could not be
+started.
+
+The scratch copy at `/home/arduino/adb-rearm-install/` was deleted
+once `/usr/local/bin/adb-tcp-rearm.sh` was in place, so the board
+carries exactly one copy (LP §4: board copies drift from the repo).
