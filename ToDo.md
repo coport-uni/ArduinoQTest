@@ -1678,3 +1678,88 @@ NOT done:
 - The vehicle was never confirmed back off from this session; the
   turn-off command and even the follow-up state read were both denied
   by the approval policy. Left with the user.
+
+## 2026-09-09 — DormTapo3 switches with the monitor plug
+
+Requested by user ("지금 모니터 자동화에 dorm tapo3도 모니터와 같이
+반응하도록 구성해줘"). GitHub issue #54. (see LP §2)
+
+Input validation, before writing this entry:
+
+- The request names one plug and one existing automation, so nothing
+  was ambiguous enough to block on. "같이 반응" is read as one target
+  list on the existing `choose`, not a second rule: both are desk
+  loads on the same "is the user here" signal, and splitting them
+  invites drift.
+- `switch.dormtapo3` confirmed live in HA first (registered earlier
+  today, issue #52, reading 1.0 W). Entity id read back from HA, not
+  copied from documentation (LP §2).
+- Branch note: `dorm-monitor-plug.yaml` exists only on
+  `feature/dorm-monitor-plug` (PR #51, still open), not on `main`, so
+  this work goes onto that branch and PR rather than a new one --
+  same call as the 2026-09-02 LED4 third-colour entry. Both this
+  branch and `feature/register-new-tapo-plugs` (PR #53) append to
+  `ToDo.md`, so whichever merges second will conflict at EOF; that is
+  a mechanical resolution, not a content question.
+
+- [ ] Add `switch.dormtapo3` to both branches of the `choose` in
+      `apps/ha-automations/dorm-monitor-plug.yaml`
+- [ ] Keep `switch.dormtapo2` (the charger) out -- a charger is
+      useful while nobody is at the desk -- and leave DormTapo4
+      unclaimed
+- [ ] Leave the SSID set, the two-minute hold, the
+      `unavailable`/`unknown` exclusion and the missing
+      `homeassistant: start` trigger exactly as they were
+- [ ] Install with `claude_test/ha_add_automation.py` and confirm the
+      reload
+- [ ] Verify both directions live and restore the original plug
+      states afterwards
+- [ ] Record results below
+
+### Results (2026-09-09)
+
+Installed over the existing `dorm_monitor_plug` id and read back from
+HA: both branches of the `choose` now carry the two-entity list, and
+the automation reloaded as
+`automation.monitor_plug_on_the_dorm_wifi (on)` -- same entity id, so
+nothing that references it broke. The `alias` was deliberately left
+at "Monitor plug on the dorm WiFi"; only `description` and the header
+comment were widened. Renaming would not have moved the entity id
+(the installer keys on the automation id, and HA's registry does
+too), but the old name is what the earlier ToDo entries and the
+dashboard refer to, so it is the user's call, not a silent change.
+
+Verified live by driving `sensor.sm_f966n_wi_fi_connection` through
+the states API, which raises a real `state_changed` event:
+
+| Case | ssid | tapo1 | tapo3 |
+|---|---|---|---|
+| initial | WUNIST_AAA | off | on |
+| arrive, t+8s | XiaomiDorm55 | on | on |
+| leave, t+60s | WUNIST_AAA | on | on |
+| ... t+130s | WUNIST_AAA | off | off |
+
+The first pass proved the off-path for DormTapo3 but not the on-path
+-- the plug was already on when the arrive branch ran. Second pass
+with DormTapo3 preset to off: arrive took it off -> on in under 8 s
+alongside the monitor, and the two-minute hold then took both off
+again. Original states restored both times (tapo1 off, tapo3 on).
+
+Safety: the whole test stayed inside away-car-aircon.yaml's known-SSID
+list, moving only between `WUNIST_AAA` and `XiaomiDorm55`, so its
+template trigger never became true. This is the direct lesson from the
+2026-09-04 incident, where ending a test on `<not connected>` really
+did start the vehicle. `switch.myhyundai_aircon` read `unavailable`
+throughout and was never commanded.
+
+- [x] Add `switch.dormtapo3` to both branches of the `choose`
+- [x] Keep `switch.dormtapo2` out and leave DormTapo4 unclaimed
+- [x] Leave the SSID set, the hold, the `unavailable`/`unknown`
+      exclusion and the missing start trigger untouched
+- [x] Install and confirm the reload
+- [x] Verify both directions live and restore the plug states
+- [x] Record results
+
+Note for whoever merges: this branch and
+`feature/register-new-tapo-plugs` (PR #53) both append to `ToDo.md`,
+so the second merge will conflict at EOF. Keep both blocks.

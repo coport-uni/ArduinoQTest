@@ -1,8 +1,21 @@
-# Power the monitor only while the phone is on the dorm's own WiFi.
+# Power the desk plugs only while the phone is on the dorm's own WiFi.
 #
 # The phone's SSID stands in for "the user is at the desk", the same
 # signal phone-wifi-led4.yaml colours LED4 from. Here it switches real
 # mains power, so the two directions are deliberately asymmetric.
+#
+# Two plugs move together: switch.dormtapo1 (the monitor) and
+# switch.dormtapo3, added 2026-09-09 at the user's request. They are
+# one target, not two rules -- both are desk loads driven by the same
+# "is the user here" signal, so a single choose keeps them from
+# drifting apart. Note that switch.dormtapo2 (the charger) is
+# deliberately NOT here: a charger is useful while nobody is at the
+# desk. DormTapo4 is registered in HA but unclaimed by any automation.
+#
+# The plugs are only synchronised from the next trigger onward. This
+# automation never asserts power at load time (see the startup note
+# below), so adding a plug mid-session leaves it wherever it was until
+# the phone next joins or leaves XiaomiDorm55.
 #
 # Only XiaomiDorm55 counts, even though phone-wifi-led4.yaml treats
 # three SSIDs as "the dorm". Seven days of recorder history say the
@@ -42,8 +55,9 @@
 # Install with claude_test/ha_add_automation.py.
 alias: Monitor plug on the dorm WiFi
 description: >-
-  Turns the monitor's plug on the moment the phone joins XiaomiDorm55,
-  and off once the phone has been off that network for two minutes.
+  Turns the monitor's plug and DormTapo3 on the moment the phone joins
+  XiaomiDorm55, and off once the phone has been off that network for
+  two minutes.
 mode: single
 
 triggers:
@@ -72,7 +86,9 @@ actions:
         sequence:
           - action: switch.turn_on
             target:
-              entity_id: switch.dormtapo1
+              entity_id:
+                - switch.dormtapo1
+                - switch.dormtapo3
       - alias: Phone has been off the dorm WiFi for two minutes
         conditions:
           - condition: trigger
@@ -80,4 +96,6 @@ actions:
         sequence:
           - action: switch.turn_off
             target:
-              entity_id: switch.dormtapo1
+              entity_id:
+                - switch.dormtapo1
+                - switch.dormtapo3
