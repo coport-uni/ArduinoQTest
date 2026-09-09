@@ -2,12 +2,24 @@
 
 Index of one-off diagnostic scripts, per CLAUDE.md Section 3.
 
+Several of these scripts take credentials or endpoints from the
+environment (`TAPO_USER`/`TAPO_PASS`, `HA_TOKEN`, `HA_BASE`, ...).
+`.env.example` in the repository root lists every variable they read,
+with the consumer named per entry. Copy it to `.env`, fill it in, and
+source it — `.env` is gitignored, so no credential ends up in the
+repo or in chat:
+
+```bash
+set -a; . ./.env; set +a
+```
+
 | File | Purpose | What was learned |
 |------|---------|------------------|
 | `probe_all.py` | Unicast python-kasa discovery probe across all 254 IPs of a /24 subnet (prefix as argv[1], default `192.168.1`). Run on the UNO Q inside a `python:3.12-alpine` container with `--network=host`. | Catches Tapo devices that ignore ICMP ping (ARP sweep alone is not sufficient). Both P110M(KR) plugs found: 192.168.1.79 (18:69:45:71:02:7C), 192.168.1.239 (18:69:45:71:05:2F). |
 | `ha_onboard.sh` | Automates Home Assistant first-boot onboarding via REST API (create owner user, exchange auth code for token, finish core_config/analytics/integration steps). Configure via env vars `HA_USER`/`HA_PASS`/`HA_BASE`/`HA_TOKEN_FILE`; saves token to `~/.ha_token` on the board. | Full onboarding is scriptable without the UI; the auth code from `/api/onboarding/users` is exchanged at `/auth/token`. |
 | `ha_flows.py` | Lists Home Assistant in-progress config flows over the WebSocket API (`config_entries/flow/progress`). Run inside the `homeassistant` container with `HA_TOKEN` env var. | Discovery flows (ssdp/zeroconf/dhcp/bluetooth) are only visible via WebSocket, not plain REST. |
-| `ha_add_tapo.sh` | Adds a Tapo/Kasa device to HA by MAC via the tplink config flow (pick_device -> user_auth_confirm). Env: `TAPO_USER`, `TAPO_PASS`. Run on the board. | KLAP auth is case-sensitive for BOTH email and password. After the first successful entry, HA reuses stored credentials — the second device skips the auth step entirely. |
+| `ha_add_tapo.sh` | Adds a Tapo/Kasa device to HA by MAC via the tplink config flow (pick_device -> user_auth_confirm). Env: `TAPO_USER`, `TAPO_PASS`. Run on the board. | KLAP auth is case-sensitive for BOTH email and password. Within one HA session a second device skips the auth step, but that is only the in-memory cache: `tplink.set_credentials()` writes to `hass.data` and is called from `config_flow.py` alone, so an HA restart loses the account and every newly added plug asks again. The `credentials_hash` persisted on a config entry is per-device and cannot authenticate a new one (verified on HA 2026.2.3, 2026-09-09). |
+| `kasa_auth_check.py` | Pre-checks Tapo account credentials against named plug IPs and prints each plug's real alias, before the account is handed to HA's config flow. Env: `TAPO_USER`, `TAPO_PASS`; stream it to the board's HA venv python with the IPs as argv. | Separates "wrong password" from "flow problem" so a failing HA flow is never ambiguous, and is the only way to learn a plug's Tapo-app alias while HA still shows the pre-auth MAC-suffix fallback (`17C0`/`17E8` turned out to be `DormTapo3`/`DormTapo4`). python-kasa leaves the aiohttp session unclosed on exit, so the real output has to be grepped out of the warning spam. |
 | `ha_login.sh` + `mint_ll.py` | Re-authenticates to HA (`/auth/login_flow`) and mints a 10-year long-lived token via the WebSocket API, stored in `~/.ha_token`. Env: `HA_PASS`. Run on the board. | Onboarding-issued access tokens expire in ~30 min; long-lived tokens must be minted over WebSocket (`auth/long_lived_access_token`), and the board's system python lacks aiohttp so minting must run inside the HA container. |
 | `toggle_test.sh` | Toggles a HA switch entity on/off at 3 s intervals for N cycles, verifying reported state after each command. Usage: `toggle_test.sh <entity_id> <cycles>`. Run on the board — easiest over SSH without copying: `ssh unoq 'bash -s -- <entity_id> <cycles>' < claude_test/toggle_test.sh`. | `switch.tapo_p1` (052F, .239) passed 6/6 transitions twice (over adb 2026-07-13, over SSH 2026-07-14); state propagates to HA within ~1 s of the service call. NOTE: both plugs were later renamed in the Tapo app, which rewrites the HA entity id — they are now `switch.dormtapo1` (기숙사-모니터, 052F/.239) and `switch.dormtapo2` (기숙사-충전기, 027C/.79). Read entity ids back from `/api/states`, not from this table. |
 | `ha_add_mqtt.sh` | Registers the MQTT integration in HA via config flow, pointing at the board-local Mosquitto (env: `MQTT_BROKER`, `MQTT_PORT`; defaults 127.0.0.1:1883). Run on the board. | The mqtt config flow's `broker` step accepts just `{broker, port}` and creates a loaded entry immediately — no restart needed. |
