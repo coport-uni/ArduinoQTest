@@ -1598,6 +1598,87 @@ separate stacked PR would only fragment the review.
   a second stacked PR; issue #44 and the PR body were updated to the
   three-colour behaviour.
 
+## 2026-09-04 — Monitor plug follows the phone onto the dorm WiFi
+
+Requested by user: the monitor's smart plug should be on only while
+the phone is connected to `XiaomiDorm55`. User decisions taken up
+front: dorm membership is `XiaomiDorm55` alone (not the three-SSID
+set that phone-wifi-led4.yaml treats as "the dorm"), turning on is
+immediate, and leaving the network turns the plug off after a hold.
+GitHub issue #50. (see LP §2)
+
+Input validation, before writing this entry:
+
+- Plug identity resolved against the live board, not the repo. The
+  2026-07-13 entries name `switch.tapo_p1` / `switch.tapo_p2`; both
+  have since been renamed in the Tapo app, and HA now exposes
+  `switch.dormtapo1` = "기숙사-모니터" (the monitor, the target here)
+  and `switch.dormtapo2` = "기숙사-충전기".
+- Recorder checked for 7 days of `sensor.sm_f966n_wi_fi_connection`
+  before choosing the SSID set and the hold, per LP §2: XiaomiDorm55
+  holds 18.79 h, ASUS_55 and ASUS_55_24 hold 0.00 h each (one
+  momentary sample apiece, 2026-09-02 13:42). The phone does not in
+  fact roam between the dorm's three SSIDs, so "XiaomiDorm55 only" is
+  not the trap it looked like. One real excursion lasted 0.1 min
+  (6 s) and returned, which is what the hold has to absorb.
+
+- [x] Write `apps/ha-automations/dorm-monitor-plug.yaml`: turn
+      `switch.dormtapo1` on when the SSID becomes `XiaomiDorm55`, and
+      off once it has been anything else for two minutes
+- [x] Keep `unavailable` / `unknown` out of the off path -- losing
+      contact with the phone must never cut power to a monitor the
+      user may be sitting in front of (LP §2)
+- [x] Install on the board with `claude_test/ha_add_automation.py`
+      and confirm it loaded as an `automation.*` entity (LP §2)
+- [x] Verify both directions live against the real plug, with the
+      monitor's original state restored afterwards
+- [x] Document the SSID / plug mapping so the stale `switch.tapo_p1`
+      naming is not repeated
+
+### Results (2026-09-04)
+
+Installed as `automation.monitor_plug_on_the_dorm_wifi`. Verified by
+driving `sensor.sm_f966n_wi_fi_connection` through the states API,
+which raises a real `state_changed` event, so the automation fired for
+real rather than through `automation.trigger`:
+
+| Case | Result |
+|---|---|
+| SSID -> `XiaomiDorm55` | plug on after 2.1 s |
+| SSID -> `WUNIST_AAA`, at t+60 s | still on (hold absorbing it) |
+| ... at t+122 s | off |
+| SSID -> `unavailable`, 150 s | still on |
+| SSID -> `unknown`, 150 s | still on |
+| SSID -> `<not connected>` | off after 123 s |
+
+The plug was restored to its original `on` afterwards.
+
+Two triggers with ids rather than one template: the off side needs a
+template so its `for` survives the phone hopping between several other
+SSIDs, while the on side wants a plain `to:` state trigger so arriving
+is instant. No `homeassistant: start` trigger, unlike
+phone-wifi-led4.yaml -- re-applying an LED colour at startup is free,
+re-asserting mains power from a just-restored sensor value is not.
+
+INCIDENT: the last verification step left the sensor at
+`<not connected>` while away-car-aircon.yaml was live on the board,
+and that automation fired at 01:42:46 UTC and really did start the
+vehicle (`last_result=success`, `공조가 켜졌습니다.`,
+`binary_sensor.myhyundai_climate_running=on` at 01:43:27). The test
+had been designed to stay inside away-car-aircon's known-network list,
+but `<not connected>` is deliberately NOT in that list -- it is one of
+the states that automation treats as "away". The earlier test ended on
+`WUNIST_AAA` and was safe; this one was not. `switch.turn_off` on
+`switch.myhyundai_aircon` was blocked by the environment's approval
+policy, so the vehicle was left to its own ~10-minute remote-climate
+limit. Recorded as LP §2.
+
+NOT done:
+
+- The vehicle was never confirmed back off from this session; the
+  turn-off command and even the follow-up state read were both denied
+  by the approval policy. Left with the user.
+
 ## 2026-09-09 — Register the two newly added Tapo plugs in HA
 
 Requested by user ("내가 tapo 장치 2개를 추가했어. 홈 어시스턴트에도
@@ -1749,3 +1830,88 @@ Verified afterwards:
 Not done, by scope: DormTapo3/4 are in no dashboard and no
 automation. `automation.monitor_plug_on_the_dorm_wifi` still drives
 `switch.dormtapo1` alone.
+
+## 2026-09-09 — DormTapo3 switches with the monitor plug
+
+Requested by user ("지금 모니터 자동화에 dorm tapo3도 모니터와 같이
+반응하도록 구성해줘"). GitHub issue #54. (see LP §2)
+
+Input validation, before writing this entry:
+
+- The request names one plug and one existing automation, so nothing
+  was ambiguous enough to block on. "같이 반응" is read as one target
+  list on the existing `choose`, not a second rule: both are desk
+  loads on the same "is the user here" signal, and splitting them
+  invites drift.
+- `switch.dormtapo3` confirmed live in HA first (registered earlier
+  today, issue #52, reading 1.0 W). Entity id read back from HA, not
+  copied from documentation (LP §2).
+- Branch note: `dorm-monitor-plug.yaml` exists only on
+  `feature/dorm-monitor-plug` (PR #51, still open), not on `main`, so
+  this work goes onto that branch and PR rather than a new one --
+  same call as the 2026-09-02 LED4 third-colour entry. Both this
+  branch and `feature/register-new-tapo-plugs` (PR #53) append to
+  `ToDo.md`, so whichever merges second will conflict at EOF; that is
+  a mechanical resolution, not a content question.
+
+- [ ] Add `switch.dormtapo3` to both branches of the `choose` in
+      `apps/ha-automations/dorm-monitor-plug.yaml`
+- [ ] Keep `switch.dormtapo2` (the charger) out -- a charger is
+      useful while nobody is at the desk -- and leave DormTapo4
+      unclaimed
+- [ ] Leave the SSID set, the two-minute hold, the
+      `unavailable`/`unknown` exclusion and the missing
+      `homeassistant: start` trigger exactly as they were
+- [ ] Install with `claude_test/ha_add_automation.py` and confirm the
+      reload
+- [ ] Verify both directions live and restore the original plug
+      states afterwards
+- [ ] Record results below
+
+### Results (2026-09-09)
+
+Installed over the existing `dorm_monitor_plug` id and read back from
+HA: both branches of the `choose` now carry the two-entity list, and
+the automation reloaded as
+`automation.monitor_plug_on_the_dorm_wifi (on)` -- same entity id, so
+nothing that references it broke. The `alias` was deliberately left
+at "Monitor plug on the dorm WiFi"; only `description` and the header
+comment were widened. Renaming would not have moved the entity id
+(the installer keys on the automation id, and HA's registry does
+too), but the old name is what the earlier ToDo entries and the
+dashboard refer to, so it is the user's call, not a silent change.
+
+Verified live by driving `sensor.sm_f966n_wi_fi_connection` through
+the states API, which raises a real `state_changed` event:
+
+| Case | ssid | tapo1 | tapo3 |
+|---|---|---|---|
+| initial | WUNIST_AAA | off | on |
+| arrive, t+8s | XiaomiDorm55 | on | on |
+| leave, t+60s | WUNIST_AAA | on | on |
+| ... t+130s | WUNIST_AAA | off | off |
+
+The first pass proved the off-path for DormTapo3 but not the on-path
+-- the plug was already on when the arrive branch ran. Second pass
+with DormTapo3 preset to off: arrive took it off -> on in under 8 s
+alongside the monitor, and the two-minute hold then took both off
+again. Original states restored both times (tapo1 off, tapo3 on).
+
+Safety: the whole test stayed inside away-car-aircon.yaml's known-SSID
+list, moving only between `WUNIST_AAA` and `XiaomiDorm55`, so its
+template trigger never became true. This is the direct lesson from the
+2026-09-04 incident, where ending a test on `<not connected>` really
+did start the vehicle. `switch.myhyundai_aircon` read `unavailable`
+throughout and was never commanded.
+
+- [x] Add `switch.dormtapo3` to both branches of the `choose`
+- [x] Keep `switch.dormtapo2` out and leave DormTapo4 unclaimed
+- [x] Leave the SSID set, the hold, the `unavailable`/`unknown`
+      exclusion and the missing start trigger untouched
+- [x] Install and confirm the reload
+- [x] Verify both directions live and restore the plug states
+- [x] Record results
+
+Note for whoever merges: this branch and
+`feature/register-new-tapo-plugs` (PR #53) both append to `ToDo.md`,
+so the second merge will conflict at EOF. Keep both blocks.
